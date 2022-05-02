@@ -1,20 +1,21 @@
 ---
 title: "fluency22_project"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 # Libraries
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+options(warn=-1)
 library(tidyverse)
 library(tidyboot)
 library(ggplot2)
 library(ggthemes)
 library(broom)
 library(lme4)
-library(lmerTest)
-
 ```
 
 This Rmd file contains the script for analyzing the fluency data. We first analyze the behavioral patterns and then compare the different foraging models.
@@ -35,8 +36,11 @@ View(fluency_data %>% select(response, participant_designated_switch, simdrop, t
 # table 1 plot
 
 ```{r}
-t1plot = fluency_data[1650:1653,] %>% 
+t1plot = fluency_data[1649:1653,] %>% 
   select(response_number, response, norm_phon, word2vec_similarity) %>% 
+  mutate(r2 = lag(response),
+         response = paste(r2, response, sep="-"))%>%
+  filter(!is.na(r2))%>%
   rename(phonological = norm_phon, semantic = word2vec_similarity)%>%
   mutate(response_number = factor(1:4))%>%
   pivot_longer(names_to = "similarity", cols =phonological:semantic )%>%
@@ -45,10 +49,10 @@ t1plot = fluency_data[1650:1653,] %>%
 
 t1plot %>%
   ggplot(aes(x = `retrieval order`, y = value, group = similarity, color = similarity)) +
-  geom_line(size = 1)+
+  geom_line(aes(linetype = similarity), size = 1)+
   geom_point(size = 10)+
   geom_label(aes(label = response), label.size = NA, 
-             nudge_x = -.30, nudge_y = .03, size = 12)+
+             nudge_x = -.33, nudge_y = .03, size = 8)+
   labs(y = "similarity")+
   theme_classic()+
   scale_color_calc()+
@@ -135,6 +139,7 @@ ordermodel = lmer(data = order_model_data,
               control=lmerControl(check.conv.singular = .makeCC(action = "ignore",  tol = 1e-4),
                                  optimizer = "bobyqa"))
 summary(ordermodel)
+sjPlot::plot_model(ordermodel, type = "int")
 ```
 
 # Num Items vs. Phon
@@ -283,33 +288,35 @@ switchmodel_data = fluency_data %>% filter(norm_phon != -999 & norm_phon !=1) %>
                                 semantic = "word2vec_similarity"),
          similarity = fct_relevel(similarity, "semantic", "phonological"))
 
-switchmodel = lmer(data = switchmodel_data,
+switchmodel = lme4::lmer(data = switchmodel_data,
   value ~ similarity*designation*switch_method + 
-                                    (1|subject),REML = FALSE, 
+                                    (designation*switch_method|subject),REML = FALSE, 
           control = lmerControl(optimizer="optimx",
             check.conv.singular = .makeCC(action = "ignore",  tol = 1e-4),
                             optCtrl=list(method='nlminb')))
 
+
 summary(switchmodel)
-
-View(fluency_data %>% select(subject, response, participant_designated_switch, simdrop, troyer,
-                             norm_phon, word2vec_similarity))
-
 ```
 
-## cluster switch figures
+## Fig 5: cluster switch figures
 
 ```{r}
-fig = fluency_data[c(793:797, 210:214),]%>% 
+fig = fluency_data[c(792:797, 209:214),]%>%
   mutate(troyer  = ifelse(row_number() == 1, 0,troyer),
          participant_designated_switch  = ifelse(row_number() == 1,
                                                  0,participant_designated_switch),
          simdrop  = ifelse(row_number() == 1, 0,simdrop)) %>%
-  select(response_number, response, norm_phon, word2vec_similarity, 
+  select(subject, response_number, response, norm_phon, word2vec_similarity, 
          participant_designated_switch, troyer, simdrop) %>% 
+  group_by(subject) %>%
+  mutate(r2 = lag(response),
+         response = paste(r2, response, sep="-"))%>%
+  filter(!is.na(r2))%>%
   rename(phonological = norm_phon, semantic = word2vec_similarity,
          participant = participant_designated_switch,
          Troyer = troyer, `similarity-drop` = simdrop)%>%
+  ungroup()%>%
   mutate(response_number = rep(factor(1:5), 2),
          subject = c(rep(1,5), rep(2,5)))%>%
   pivot_longer(names_to = "similarity", cols =phonological:semantic )%>%
@@ -418,36 +425,7 @@ hills_bic = errors %>%
   group_by(norms, type) %>%
   summarise(medianBIC = median(deltaBIC)) %>%
   arrange(norms, desc(medianBIC))
-```
 
-
-## test model differences
-
-```{r}
-modeltestdata = errors %>% filter(errortype == "optimal") %>%
-  mutate(k = ifelse(type %in% c("static", "dynamic"), 2, 3),
-                  BIC = k*log(number_of_items) - 2*(LL))
-
-## troyer models
-troyer = modeltestdata %>% filter(norms != "simdrop" & 
-                                    type %in% c("plocaldynamic", "pglobaldynamic"))
-summary(lmer(data = troyer, 
-                 BIC ~ type + (1|subject)))
-
-
-## simdrop models
-simdrop = modeltestdata %>% filter(norms != "troyer"& 
-                                     type %in% c("plocaldynamic", "pglobaldynamic"))
-simdrop$type = as.factor(simdrop$type)
-simdrop_bic_model = lmer(data = simdrop, 
-                 BIC ~ type + (1|subject))
-summary(simdrop_bic_model)
-
-```
-
-# participant-designated
-
-```{r}
 participant_errors = fluency_data_fits %>% 
   select(dataset, subject, number_of_items, starts_with("errors_participant")) %>%
   filter(dataset == "LEA") %>%
@@ -467,20 +445,63 @@ participant_bic = participant_errors %>%
   group_by(norms, type) %>%
   summarise(medianBIC = median(deltaBIC)) %>%
   arrange(norms, desc(medianBIC))
-
-lea_testdata = participant_errors %>% filter(errortype == "optimal") %>%
-  mutate(k = ifelse(type %in% c("static", "dynamic"), 2, 3),
-                  BIC = k*log(number_of_items) - 2*(LL))
-lea_testdata$type = as.factor(lea_testdata$type)
-contrasts(lea_testdata$type) = contr.treatment(4, base = 4)
-summary(lmer(data = lea_testdata, 
-                 BIC ~ type + (1|subject)))
-contrasts(lea_testdata$type)
-
-lea_testdata %>%
-  ggplot() + geom_histogram(aes(x = BIC, group = type, fill = type), alpha = 0.5, binwidth = 100)
 ```
 
+
+## test model differences
+
+```{r}
+modeltestdata = errors %>% filter(errortype == "optimal") %>%
+  mutate(k = ifelse(type %in% c("static", "dynamic"), 2, 3),
+                  BIC = k*log(number_of_items) - 2*(LL))
+
+participanttestdata = participant_errors %>% filter(errortype == "optimal") %>%
+  mutate(k = ifelse(type %in% c("static", "dynamic"), 2, 3),
+                  BIC = k*log(number_of_items) - 2*(LL))
+
+```
+
+```{r}
+## sign test
+
+m_troyer = modeltestdata %>% filter(!norms %in% c("simdrop")) %>%
+  select(dataset, subject, type, BIC) %>%
+  pivot_wider(names_from = type, values_from = BIC) %>%
+  mutate(pmodels_dynamic = as.numeric(plocaldynamic < dynamic   | pglobaldynamic < dynamic  | 
+                                        pswitchonlydynamic < dynamic ))
+
+binom.test(sum(m_troyer$pmodels_dynamic),nrow(m_troyer), alternative = "greater")
+
+
+m_simdrop = modeltestdata %>% filter(!norms %in% c("troyer")) %>%
+  select(dataset, subject, type, BIC) %>%
+  pivot_wider(names_from = type, values_from = BIC) %>%
+  mutate(pmodels_dynamic = as.numeric(plocaldynamic < dynamic   | pglobaldynamic < dynamic | 
+                                        pswitchonlydynamic < dynamic ))
+
+binom.test(sum(m_simdrop$pmodels_dynamic),nrow(m_simdrop), alternative = "greater")
+
+m_participant = participanttestdata %>% 
+  select(dataset, subject, type, BIC) %>%
+  pivot_wider(names_from = type, values_from = BIC) %>%
+  mutate(pmodels_dynamic = as.numeric(plocaldynamic < dynamic   | pglobaldynamic < dynamic | 
+                                        pswitchonlydynamic < dynamic ))
+
+binom.test(sum(m_participant$pmodels_dynamic),nrow(m_participant), alternative = "greater")
+
+bestmodel = modeltestdata %>%
+#filter(!norms %in% c("troyer", "jointsimdrop")) %>%
+  group_by(subject, dataset) %>%
+  slice_min(BIC) %>%
+  group_by(dataset,type) %>%
+  summarize(count = n()) 
+
+data_sum = bestmodel %>% group_by(dataset) %>% summarise(sum = sum(count))
+bestmodel = bestmodel %>% left_join(data_sum) %>% 
+  mutate(percent = count/sum)
+
+bestmodel
+```
 
 # vocab
 
