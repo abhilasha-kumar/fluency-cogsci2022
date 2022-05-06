@@ -5,7 +5,7 @@ output:
   html_document: default
 ---
 
-# Libraries
+# import libraries
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -18,28 +18,31 @@ library(broom)
 library(lme4)
 ```
 
-This Rmd file contains the script for analyzing the fluency data. We first analyze the behavioral patterns and then compare the different foraging models.
+This Rmd file contains the script for analyzing the fluency data. We first analyze the behavioral patterns and then compare the different foraging models. To reproduce the analyses, you can use the .csv files provided in the git repository, or obtain the csvs from the Jupyter notebook and then proceed to analyze the data via the scripts in this Rmd notebook.
 
-# Drive Download
+# download data
 
 First we download the precomputed behavioral data.
 
 ```{r}
-fluency_data = read.csv("data/precomputed_data.csv") %>% filter(domain == "animals")
+raw_data = read.csv("data/raw_data.csv")
+fluency_data = read.csv("data/cogsci2022-metrics.csv") %>%
+  left_join(raw_data %>% select(dataset, subject) %>% distinct()) %>%
+  group_by(subject) %>% mutate(response_number = row_number()) %>%
+  rename(response = item)
 ```
 
-# Fig 1 plot
+# figure 1
 
 ```{r}
 t1plot = fluency_data[1649:1653,] %>% 
-  select(response_number, response, norm_phon, word2vec_similarity) %>% 
+  select(response_number, response, phonology, semantic) %>% 
   mutate(r2 = lag(response),
          response = paste(r2, response, sep="-"))%>%
   filter(!is.na(r2))%>%
-  rename(phonological = norm_phon, semantic = word2vec_similarity)%>%
   mutate(response_number = factor(1:4))%>%
-  pivot_longer(names_to = "similarity", cols =phonological:semantic )%>%
-  mutate(similarity = fct_relevel(similarity, "semantic", "phonological"))%>%
+  pivot_longer(names_to = "similarity", cols =phonology:semantic )%>%
+  mutate(similarity = fct_relevel(similarity, "semantic", "phonology"))%>%
   rename(`retrieval order` = response_number)
 
 t1plot %>%
@@ -61,164 +64,148 @@ t1plot %>%
 
 ```
 
-# Descriptives
+# behavioral results
+
+## response statistics
 
 ```{r}
 ## num items produced
 
 fluency_data %>% 
-  group_by(dataset, domain, subject) %>%
+  group_by(dataset, subject) %>%
   summarise(items = n()) %>%
   group_by(dataset) %>%
   summarise(mean_items = mean(items),
             sd_items = sd(items))
 
 ## mean similarities
-fluency_data %>% filter(norm_phon != -999 & norm_phon !=1) %>%
+fluency_data %>% filter(phonology != -999 & phonology !=1) %>%
   filter(response_number > 1)%>%
   group_by(dataset) %>%
-  summarise(mean_sem = mean(word2vec_similarity, na.rm = TRUE),
-            sd_sem = sd(word2vec_similarity, na.rm = TRUE),
-            mean_phon = mean(norm_phon, na.rm = TRUE),
-            sd_phon = sd(norm_phon, na.rm = TRUE))
-
-## correlation
-
-x = fluency_data %>%  filter(norm_phon != -999 & norm_phon !=1)
-Hmisc::rcorr(x$norm_phon, x$word2vec_similarity)
-
+  summarise(mean_sem = mean(semantic, na.rm = TRUE),
+            sd_sem = sd(semantic, na.rm = TRUE),
+            mean_phon = mean(phonology, na.rm = TRUE),
+            sd_phon = sd(phonology, na.rm = TRUE))
 ```
 
-
-# Retrieval order
+## cue usage over time
 
 ```{r}
 ## combine semantic + phonological in one plot
-order_data = fluency_data %>% filter(norm_phon != -999 & norm_phon !=1) %>%
-  group_by(domain,response_number) %>%
-  summarise_at(vars(norm_phon, word2vec_similarity), mean) %>%
-  rename(phonological = norm_phon, semantic = word2vec_similarity)%>%
+order_data = fluency_data %>% filter(phonology != -999 & phonology !=1) %>%
+  group_by(response_number) %>%
+  summarise_at(vars(phonology, semantic), mean) %>%
+    rename(phonological = phonology, semantic = semantic)%>%
   pivot_longer(names_to = "similarity", cols =phonological:semantic )%>%
   mutate(similarity = fct_relevel(similarity, "semantic", "phonological"))%>%
   rename(`retrieval order` = response_number)
 ```
-## Fig 2 plot
+### figure 2
 ```{r}
-order_data %>%
+fig2 = order_data %>%
   ggplot(aes(x = `retrieval order`, y = value, group = similarity, color = similarity)) +
   geom_point(alpha = 0.2)+
   geom_smooth(method = "lm")+
   labs(y = "similarity")+
   theme_few()+
-    facet_wrap(~domain)+
   scale_color_calc()+
-    #theme(aspect.ratio = 1)+
    theme(axis.title = element_text(size = rel(2)),
           legend.title = element_text(face = "bold", size = rel(2)),
          legend.text  = element_text(size = rel(2)),
          plot.title = element_text(hjust = .5),
          strip.text.x = element_text(size = rel(2.5)),
          axis.text.x = element_text(size = rel(1)))
+ggsave("plots/fig2.pdf", fig2, width = 8, height = 6)
 ```
 
-## model
+### model
 ```{r}
-order_model_data = fluency_data %>% filter(norm_phon != -999 & norm_phon !=1) %>%
-  select(subject, domain, response_number, norm_phon, word2vec_similarity) %>%
-  rename(phonological = norm_phon, semantic = word2vec_similarity)%>%
+order_model_data = fluency_data %>% filter(phonology != -999 & phonology !=1) %>%
+  select(subject, response_number, phonology, semantic) %>%
+  rename(phonological = phonology, semantic = semantic)%>%
   pivot_longer(names_to = "similarity", cols =phonological:semantic )%>%
   mutate(similarity = fct_relevel(similarity, "semantic", "phonological"))
 
-ordermodel = lmer(data = order_model_data, 
+ordermodel = lmerTest::lmer(data = order_model_data, 
      value ~ response_number*similarity + 
                                     (response_number*similarity|subject),
               control=lmerControl(check.conv.singular = .makeCC(action = "ignore",  tol = 1e-4),
                                  optimizer = "bobyqa"))
 summary(ordermodel)
-sjPlot::plot_model(ordermodel, type = "int")
 ```
 
-# Num Items vs. Phon
+## cues and retrieval performance
 
 ```{r}
 ## data
 items_produced = fluency_data %>% 
-  group_by(dataset, domain, subject) %>%
+  group_by(dataset, subject) %>%
   summarise(items = n()) %>%
   left_join( fluency_data %>% filter(response_number > 1) %>%
-  group_by(dataset, domain, subject) %>% 
-    summarise_at(vars(norm_phon, word2vec_similarity), mean, na.rm = TRUE))%>%
+  group_by(dataset, subject) %>% 
+    summarise_at(vars(phonology, semantic), mean, na.rm = TRUE))%>%
   # rescale phonological similarity
-  mutate(norm_phon = norm_phon + 0.3) %>%
-  rename(phonological = norm_phon, semantic = word2vec_similarity)%>%
+  mutate(phonology = phonology + 0.3) %>%
+  rename(phonological = phonology, semantic = semantic)%>%
   pivot_longer(names_to = "similarity", cols =phonological:semantic )%>%
   mutate(similarity = fct_relevel(similarity, "semantic", "phonological")) 
 ```
 
-## Fig 3 plot
+### figure 3
 
 ```{r}
-items_produced %>%
+fig3 = items_produced %>%
   ggplot(aes(x= value, y = items, color = similarity, group = similarity)) +
   geom_point(alpha = 0.2)+
 geom_smooth(method = "lm")+
   theme_few()+
-  facet_wrap(~domain)+
   labs(x = "similarity")+
   scale_color_calc()+
-  #theme(aspect.ratio = 1)+
   theme(axis.title = element_text(size = rel(2)),
           legend.title = element_text(face = "bold", size = rel(2)),
          legend.text  = element_text(size = rel(2)),
          plot.title = element_text(hjust = .5),
          strip.text.x = element_text(size = rel(2.5)),
          axis.text.x = element_text(size = rel(1)))
+ggsave("plots/fig3.pdf", fig3, width = 8, height = 6)
 ```
-## model
+### model
 ```{r}
 ## unscale phon similarity for model
 
 items_produced = items_produced %>% 
   mutate(value = ifelse(similarity == "phonological", value - 0.3, value))
 
-itemmodel = lmer(data = items_produced, 
+itemmodel = lmerTest::lmer(data = items_produced, 
      value ~ items*similarity + (1|subject),
               control=lmerControl(check.conv.singular = .makeCC(action = "ignore",  tol = 1e-4),
                                  optimizer = "bobyqa"))
 summary(itemmodel)
 ```
 
-# Cluster/switch analyses
-```{r}
-x = fluency_data %>% filter(norm_phon != -999 & norm_phon !=1)%>%
-  filter(dataset== "LEA") 
+## clusters and switches
 
-Hmisc::rcorr(x$participant_designated_switch, x$troyer)
-Hmisc::rcorr(x$participant_designated_switch, x$simdrop)
-```
-
-## Fig 4 plot
+### figure 4
 ```{r}
 
-switchplotdata = fluency_data %>% filter(norm_phon != -999 & norm_phon !=1) %>%
+switchplotdata = fluency_data %>% filter(phonology != -999 & phonology !=1) %>%
   filter(dataset== "LEA") %>%
-  select(dataset, domain, subject, norm_phon, word2vec_similarity,
-         participant_designated_switch,simdrop, troyer) %>%
+  select(dataset, subject, phonology, semantic,
+         participant,simdrop, troyer) %>%
   pivot_longer(names_to = "switch_method", 
-               cols = c("simdrop", "participant_designated_switch", "troyer"))%>%
+               cols = c("simdrop", "participant", "troyer"))%>%
   filter(!is.na(value))%>%
-  group_by(dataset,domain, subject, switch_method, value) %>%
-  summarise_at(vars(norm_phon, word2vec_similarity), mean, na.rm = TRUE)%>% 
+  group_by(dataset, subject, switch_method, value) %>%
+  summarise_at(vars(phonology, semantic), mean, na.rm = TRUE)%>% 
   rename(switch = value) %>%
-  #mutate(norm_phon = norm_phon + 0.3)%>%
-  pivot_longer(names_to = "similarity", cols = norm_phon:word2vec_similarity) %>%
+  pivot_longer(names_to = "similarity", cols = phonology:semantic) %>%
   mutate(designation = ifelse(switch==0, "cluster", "switch"),
          `switch method` = fct_recode(switch_method,
-                                    `participant\ndesignated` = "participant_designated_switch",
+                                    `participant\ndesignated` = "participant",
                                     `similarity\ndrop` = "simdrop",
                                     `Troyer\nnorms` = "troyer"),
-         similarity= fct_recode(similarity, `phonological similarity` = "norm_phon",
-                                `semantic similarity` = "word2vec_similarity"),
+         similarity= fct_recode(similarity, `phonological similarity` = "phonology",
+                                `semantic similarity` = "semantic"),
          similarity = fct_relevel(similarity, "semantic similarity", "phonological similarity"),
          `switch method` = fct_relevel(`switch method`, "Troyer\nnorms", "similarity\ndrop",
                                        "participant\ndesignated"))
@@ -261,9 +248,8 @@ summarise(ci = list(mean_cl_boot(value) %>%
   #scale_y_continuous(labels=scaleFUN)+
   theme_few()+
   scale_fill_few()+
-      scale_y_continuous(breaks = seq(0, 0.1, 0.04), limits = c(0, 0.1))+
+      scale_y_continuous(breaks = seq(0, 0.12, 0.04), limits = c(0, 0.12))+
   labs(x ="\nswitch method", y = "mean\nsimilarity", title = "phonological similarity")+
-  #theme(aspect.ratio = 1)+
    theme(axis.title = element_text(size = rel(2.5)),
           legend.title = element_text(face = "bold", size = rel(2.5)),
          legend.text  = element_text(size = rel(2.5)),
@@ -271,26 +257,28 @@ summarise(ci = list(mean_cl_boot(value) %>%
          strip.text.x = element_text(size = rel(2.5)),
          axis.text.x = element_text(size = rel(2.5)))
 
-gridExtra::grid.arrange(semplot, phonplot, nrow = 2)
+fig4 = gridExtra::grid.arrange(semplot, phonplot, nrow = 2)
+ggsave("plots/fig4.pdf", fig4, height = 10, width = 10)
+
 ```
-## model
+### model
 ```{r}
-switchmodel_data = fluency_data %>% filter(norm_phon != -999 & norm_phon !=1) %>%
+switchmodel_data = fluency_data %>% filter(phonology != -999 & phonology !=1) %>%
   filter(dataset == "LEA") %>%
-  select(dataset, domain,  subject,response, norm_phon, word2vec_similarity,
-         participant_designated_switch,simdrop, troyer) %>%
+  select(dataset,  subject,response, phonology, semantic,
+         participant,simdrop, troyer) %>%
   pivot_longer(names_to = "switch_method", 
-               cols = c("simdrop", "participant_designated_switch", "troyer"))%>%
+               cols = c("simdrop", "participant", "troyer"))%>%
   filter(!is.na(value)) %>%
   rename(switch = value) %>%
-  pivot_longer(names_to = "similarity", cols = norm_phon:word2vec_similarity) %>%
+  pivot_longer(names_to = "similarity", cols = phonology:semantic) %>%
   mutate(designation = ifelse(switch==0, "cluster", "switch"),
          `switch method` = fct_recode(switch_method,
-                                    `participant designated` = "participant_designated_switch",
+                                    `participant designated` = "participant",
                                     `similarity drop` = "simdrop",
                                     `Troyer norms` = "troyer"),
-         similarity= fct_recode(similarity, phonological = "norm_phon",
-                                semantic = "word2vec_similarity"),
+         similarity= fct_recode(similarity, phonological = "phonology",
+                                semantic = "semantic"),
          similarity = fct_relevel(similarity, "semantic", "phonological"))
 
 switchmodel = lme4::lmer(data = switchmodel_data,
@@ -304,7 +292,7 @@ switchmodel = lme4::lmer(data = switchmodel_data,
 summary(switchmodel)
 ```
 
-## Fig 5 plot
+### figure 5
 
 We obtained the plot from the raw data, and then edited its labels/colors in Powerpoint. The final plot is uploaded in the git repository.
 
@@ -312,17 +300,17 @@ We obtained the plot from the raw data, and then edited its labels/colors in Pow
 scaleFUN <- function(x) sprintf("%.2f", x)
 fig = fluency_data[c(792:797, 209:214),]%>%
   mutate(troyer  = ifelse(row_number() == 1, 0,troyer),
-         participant_designated_switch  = ifelse(row_number() == 1,
-                                                 0,participant_designated_switch),
+         participant  = ifelse(row_number() == 1,
+                                                 0,participant),
          simdrop  = ifelse(row_number() == 1, 0,simdrop)) %>%
-  select(subject, response_number, response, norm_phon, word2vec_similarity, 
-         participant_designated_switch, troyer, simdrop) %>% 
+  select(subject, response_number, response, phonology, semantic, 
+         participant, troyer, simdrop) %>% 
   group_by(subject) %>%
   mutate(r2 = lag(response),
          response = paste(r2, response, sep="-"))%>%
   filter(!is.na(r2))%>%
-  rename(phonological = norm_phon, semantic = word2vec_similarity,
-         participant = participant_designated_switch,
+  rename(phonological = phonology, semantic = semantic,
+         participant = participant,
          Troyer = troyer, `similarity-drop` = simdrop)%>%
   ungroup()%>%
   mutate(response_number = rep(factor(1:5), 2),
@@ -337,8 +325,6 @@ fig = fluency_data[c(792:797, 209:214),]%>%
 fig1 = fig %>% filter(subject == 2) %>%
   ggplot(aes(x = `retrieval order`, y = value, group = similarity)) +
   geom_line(aes(linetype = similarity),size = 1)+
-  # geom_label(aes(label = response),label.size = NA, 
-  #            nudge_x = -.35, nudge_y = .01, size = 12)+
   labs(y = "similarity", x = "")+
   geom_vline(xintercept = 4, color = "goldenrod", linetype = "dashed")+
   geom_vline(xintercept = 5, color = "springgreen3", linetype = "dashed")+
@@ -348,10 +334,6 @@ fig1 = fig %>% filter(subject == 2) %>%
                size = 10, color = "goldenrod", shape = 15)+
     geom_point(data = fig %>% filter(subject == 2 & response %in% c("pig")), 
                size = 10, fill = "springgreen3",shape = 23, color = "springgreen3")+
-  #  annotate("text", x = 5.32, y = 0.45, label = "participant\nswitch", 
-  #           size = 10, color = "springgreen3")+
-  # annotate("text", x = 4.25, y = 0.45, label = "model\nswitch", 
-  #          size = 10, color = "goldenrod")+
     theme_classic()+
   scale_color_colorblind()+
   scale_shape_manual(values=c(19, 15))+
@@ -368,8 +350,6 @@ fig1 = fig %>% filter(subject == 2) %>%
 fig2 = fig %>% filter(subject == 1) %>%
   ggplot(aes(x = `retrieval order`, y = value, group = similarity)) +
   geom_line(aes(linetype = similarity),size = 1)+
-  # geom_label(aes(label = response),label.size = NA, 
-  #            nudge_x = -.35, nudge_y = .01, size = 12)+
   labs(y = "similarity", x = "retrieval order")+
   geom_vline(xintercept = 4, color = "goldenrod", linetype = "dashed")+
   geom_vline(xintercept = 5, color = "springgreen3", linetype = "dashed")+
@@ -379,10 +359,6 @@ fig2 = fig %>% filter(subject == 1) %>%
                size = 10, color = "goldenrod",shape = 15)+
   geom_point(data = fig %>% filter(subject == 1 & response %in% c("lizard")), 
                size = 10, fill = "springgreen3",shape = 23, color = "springgreen3")+
-  #  annotate("text", x = 5.3, y = 0.57, label = "participant\nswitch", 
-  #           size = 10, color = "springgreen3")+
-  # annotate("text", x = 4.25, y = 0.57, label = "model\nswitch", 
-  #          size = 10, color = "goldenrod")+
     theme_classic()+
   scale_color_colorblind()+
     scale_y_continuous(breaks = seq(0, 0.8, 0.2), limits = c(0, 0.6))+
@@ -395,158 +371,87 @@ fig2 = fig %>% filter(subject == 1) %>%
          strip.text.x = element_text(size = rel(2.5)),
          axis.text.x = element_text(size = rel(1)))
 
-gridExtra::grid.arrange(fig1, fig2, nrow = 2)
+fig5skeleton = gridExtra::grid.arrange(fig1, fig2, nrow = 2)
+ggsave("plots/fig5skeleton.pdf", fig5skeleton, width = 12, height = 10)
+# added labels and key in powerpoint after saving this preliminary plot
+```
+### switch correlations
+```{r}
+x = fluency_data %>% filter(phonology != -999 & phonology !=1)%>%
+  filter(dataset== "LEA") 
+
+Hmisc::rcorr(x$participant, x$troyer)
+Hmisc::rcorr(x$participant, x$simdrop)
 ```
 
-# Foraging Models
+# computational foraging models
 
-Here, we first download the foraging models fit at the particpant level.
+Here, we first download the foraging models fit at the particpant level - please refer to the Jupyter notebook for model specifications.
 
 ```{r}
 
-fluency_data_fits <- read_csv("newdata-fullfits.csv")
-
-data_labels = readxl::read_excel("data_fluency_cogsci2022.xlsx") %>% 
-  select(subject, dataset) %>% distinct()
-
-fluency_data_fits = left_join(fluency_data_fits, data_labels)
-
-## exclude participant designated for these
-errors = fluency_data_fits %>% select(-starts_with("errors_participant"))%>%
-  select(dataset, subject, number_of_items, starts_with("errors")) %>%
-  pivot_longer(names_to = "model", 
-               cols = errors_static_optimal:errors_troyer_pglobaldynamic_random) %>%
-  separate(model, into = c("errors", "norms", "type", "errortype")) %>% select(-errors)%>%
-  mutate(errortype = ifelse(is.na(errortype), type, errortype),
-         type = ifelse(type %in% c("optimal", "random"), norms,type),
-    LL = -value)
+fluency_data_fits <- read_csv("data/cogsci2022-fits.csv") %>%
+  left_join(raw_data %>% select(dataset, subject) %>% distinct()) %>%
+# remove models that are not relevant to analyses 
+  filter((dataset == "HJT" & !str_detect(model_names, "participant")) |
+           (dataset == "LEA" ))%>%
+  filter(!model_names %in% c("psyrev static participant", "static plocal participant",
+                                "psyrev static simdrop", "static plocal simdrop"))
 ```
-## calculate delta BIC
+## median BIC
 
 In this method, a BIC is calculated separately for each subject based on the number of items they produced, and then the median BIC is calculated from the difference of optimal and random models
+
 ```{r}
-hills_bic = errors %>%
-  mutate(k = ifelse(type %in% c("static", "dynamic"), 2, 3),
-                  BIC = k*log(number_of_items) - 2*(LL))%>%
-  select(-c(value,LL,k) )%>%
-  pivot_wider(names_from = errortype, values_from = BIC)%>%
-  mutate(deltaBIC  = random - optimal) %>%
-  group_by(norms, type) %>%
-  summarise(medianBIC = median(deltaBIC)) %>%
-  arrange(norms, desc(medianBIC))
+bic = fluency_data_fits %>%
+  filter(!model_names %in% c("psyrev static participant", "static plocal participant",
+                                "psyrev static simdrop", "static plocal simdrop"))%>%
+  select(-c(1,2)) %>% distinct() %>%
+  mutate(k = ifelse((str_detect(model_names, "psyrev static") | 
+                      str_detect(model_names, "psyrev dynamic simdrop") | 
+                      str_detect(model_names, "psyrev dynamic troyer") | 
+                      str_detect(model_names, "psyrev dynamic participant")) , 
+                    2, 3), 
+         optimalBIC = k*log(N) - 2*(-optimal_nLLs),
+         randomBIC = k*log(N) - 2*(-random_nLLs)) # + here bc we have nLLs
 
-participant_errors = fluency_data_fits %>% 
-  select(dataset, subject, number_of_items, starts_with("errors_participant")) %>%
-  filter(dataset == "LEA") %>%
-  pivot_longer(names_to = "model", 
-        cols = errors_participant_dynamic_optimal:errors_participant_pglobaldynamic_random) %>%
-  separate(model, into = c("errors", "norms", "type", "errortype")) %>% select(-errors)%>%
-  mutate(errortype = ifelse(is.na(errortype), type, errortype),
-         type = ifelse(type %in% c("optimal", "random"), norms,type),
-    LL = -value)
 
-participant_bic = participant_errors %>%
-  mutate(k = ifelse(type %in% c("static", "dynamic"), 2, 3),
-                  BIC = k*log(number_of_items) - 2*(LL))%>%
-  select(-c(value,LL,k) )%>%
-  pivot_wider(names_from = errortype, values_from = BIC)%>%
-  mutate(deltaBIC  = random - optimal) %>%
-  group_by(norms, type) %>%
+median_bic = bic %>% 
+  mutate(deltaBIC  = randomBIC - optimalBIC) %>%
+  group_by(model_names) %>%
   summarise(medianBIC = median(deltaBIC)) %>%
-  arrange(norms, desc(medianBIC))
+  arrange( desc(medianBIC))
 ```
 
-
-## test model differences
-
-```{r}
-modeltestdata = errors %>% filter(errortype == "optimal") %>%
-  mutate(k = ifelse(type %in% c("static", "dynamic"), 2, 3),
-                  BIC = k*log(number_of_items) - 2*(LL))
-
-participanttestdata = participant_errors %>% filter(errortype == "optimal") %>%
-  mutate(k = ifelse(type %in% c("static", "dynamic"), 2, 3),
-                  BIC = k*log(number_of_items) - 2*(LL))
-
-```
-
-We perform the sign test for model fits. 
-
-```{r}
 ## sign test
 
-m_troyer = modeltestdata %>% filter(!norms %in% c("simdrop")) %>%
-  select(dataset, subject, type, BIC) %>%
-  pivot_wider(names_from = type, values_from = BIC) %>%
-  mutate(pmodels_dynamic = as.numeric(plocaldynamic < dynamic   | pglobaldynamic < dynamic  | 
-                                        pswitchonlydynamic < dynamic ))
+```{r}
+m_troyer = bic %>% filter(!str_detect(model_names, "simdrop") & 
+                             !(str_detect(model_names, "participant"))) %>%
+  select(subject, model_names, optimalBIC) %>%
+  pivot_wider(names_from = model_names, values_from = optimalBIC)%>%
+  mutate(pmodels_dynamic = as.numeric(`dynamic plocal troyer` < `psyrev dynamic troyer`| 
+                                        `dynamic pglobal troyer` < `psyrev dynamic troyer`|
+                                        `dynamic pswitchonly troyer` < `psyrev dynamic troyer`))
 
 binom.test(sum(m_troyer$pmodels_dynamic),nrow(m_troyer), alternative = "greater")
 
-
-m_simdrop = modeltestdata %>% filter(!norms %in% c("troyer")) %>%
-  select(dataset, subject, type, BIC) %>%
-  pivot_wider(names_from = type, values_from = BIC) %>%
-  mutate(pmodels_dynamic = as.numeric(plocaldynamic < dynamic   | pglobaldynamic < dynamic | 
-                                        pswitchonlydynamic < dynamic ))
+m_simdrop = bic %>% filter(!str_detect(model_names, "troyer") & 
+                             !(str_detect(model_names, "participant"))) %>%
+  select(subject, model_names, optimalBIC) %>%
+  pivot_wider(names_from = model_names, values_from = optimalBIC)%>%
+  mutate(pmodels_dynamic = as.numeric(`dynamic plocal simdrop` < `psyrev dynamic simdrop`| 
+                                        `dynamic pglobal simdrop` < `psyrev dynamic simdrop`|
+                                        `dynamic pswitchonly simdrop` < `psyrev dynamic simdrop`))
 
 binom.test(sum(m_simdrop$pmodels_dynamic),nrow(m_simdrop), alternative = "greater")
 
-m_participant = participanttestdata %>% 
-  select(dataset, subject, type, BIC) %>%
-  pivot_wider(names_from = type, values_from = BIC) %>%
-  mutate(pmodels_dynamic = as.numeric(plocaldynamic < dynamic   | pglobaldynamic < dynamic | 
-                                        pswitchonlydynamic < dynamic ))
+m_participant = bic %>% filter(str_detect(model_names, "participant")) %>%
+  select(subject, model_names, optimalBIC) %>%
+  pivot_wider(names_from = model_names, values_from = optimalBIC)%>%
+  mutate(pmodels_dynamic = as.numeric(`dynamic plocal participant` < `psyrev dynamic participant`| 
+                                        `dynamic pglobal participant` < `psyrev dynamic participant`|
+                                   `dynamic pswitchonly participant` < `psyrev dynamic participant`))
 
 binom.test(sum(m_participant$pmodels_dynamic),nrow(m_participant), alternative = "greater")
-
-bestmodel = modeltestdata %>%
-#filter(!norms %in% c("troyer", "jointsimdrop")) %>%
-  group_by(subject, dataset) %>%
-  slice_min(BIC) %>%
-  group_by(dataset,type) %>%
-  summarize(count = n()) 
-
-data_sum = bestmodel %>% group_by(dataset) %>% summarise(sum = sum(count))
-bestmodel = bestmodel %>% left_join(data_sum) %>% 
-  mutate(percent = count/sum)
-
-bestmodel
-```
-
-# vocab construction
-
-This section goes over how the list of animals used in the foraging models was created. Please refer to the Jupyter notebook for more details about the final stimuli.
-
-```{r}
-data = readxl::read_excel("data_fluency_cogsci2022.xlsx")
-simlabels = read.csv("similaritylabels.csv", header = FALSE)
-vocab = as.data.frame(c(unique(data$response), unique(simlabels$V1)))
-colnames(vocab) = c("vocab_word")
-vocab = vocab %>% distinct()
-
-write.csv(vocab, file = "vocab.csv", row.names = FALSE)
-
-vocab = read_csv("vocab.csv")
-animals = data %>% filter(domain == "animals") %>% select(response) %>%distinct()
-animals = as.data.frame(c(animals$response, simlabels$V1))
-colnames(animals) = c("animal_word")
-animals = animals %>% distinct()
-
-animals = animals %>% 
-  mutate(in_vocab = ifelse(animal_word %in% vocab$vocab_word, 1, 0))
-
-animals = animals %>% select(-in_vocab)
-write.csv(animals, file = "new_animals.csv", row.names = FALSE, col.names = FALSE)
-
-freqs = read_csv("animal_freqs.csv")
-oldfreqs = read.csv("old_frequencies.csv", header = FALSE) %>% 
-  rename(animal_word = V1, freq2 = V2)
-animals = left_join(animals, freqs)
-animals = left_join(animals, oldfreqs)
-
-animals = animals %>% mutate(freq = ifelse(is.na(freq), log(freq2, base = 10), freq))
-animals = animals%>% mutate(freq = ifelse(is.na(freq), 0.5, freq))
-animals = animals %>% select(-freq2)
-write.csv(animals, file = "animals_frequencies.csv", row.names = FALSE)
 ```
