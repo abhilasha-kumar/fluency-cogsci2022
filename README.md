@@ -4,7 +4,7 @@ This repository contains the data and analysis scripts for the methods and analy
 
 Our analyses were conducted in two steps:
 
-1. We precomputed some response measures (such as semantic similarity, phonological similarity, frequency) and then fit optimal foraging models on these response measures. The details of these analyses are in the Jupyter notebook, which is also available as a [colab notebook](https://colab.research.google.com/github/abhilasha-kumar/fluency-cogsci2022/blob/main/fluency_cogsci2022.ipynb)
+1. We precomputed some response measures (such as semantic similarity, phonological similarity, frequency) and then fit optimal foraging models on these response measures. The details of these analyses are in the Jupyter notebook.
 
 2. Next, we conducted some analyses of the behavioral data as well as compared the foraging models. These analyses can be found in the Rmd notebook.
 
